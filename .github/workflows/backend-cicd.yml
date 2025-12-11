@@ -1,0 +1,206 @@
+
+name: Backend CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+
+env:
+  ACR_NAME: ${{ secrets.ACR_LOGIN_SERVER }}
+  IMAGE_NAME: taskmanagement-backend
+  AKS_RESOURCE_GROUP: ${{ secrets.AKS_RESOURCE_GROUP }}
+  AKS_CLUSTER_NAME: ${{ secrets.AKS_CLUSTER_NAME }}
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Azure Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ secrets.ACR_LOGIN_SERVER }}
+        username: ${{ secrets.ACR_USERNAME }}
+        password: ${{ secrets.ACR_PASSWORD }}
+
+    - name: Build Docker image
+      run: |
+        docker build -t ${{ env.ACR_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+          -t ${{ env.ACR_NAME }}/${{ env.IMAGE_NAME }}:latest \
+          ./backend
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.ACR_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Upload Trivy results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Check Trivy scan results
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.ACR_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        format: 'table'
+        exit-code: '0'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Push Docker image to ACR
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: |
+        docker push ${{ env.ACR_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        docker push ${{ env.ACR_NAME }}/${{ env.IMAGE_NAME }}:latest
+
+  deploy:
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+
+    - name: Get AKS credentials
+      run: |
+        az aks get-credentials \
+          --resource-group ${{ env.AKS_RESOURCE_GROUP }} \
+          --name ${{ env.AKS_CLUSTER_NAME }} \
+          --overwrite-existing
+
+    - name: Deploy to Green Environment
+      run: |
+        # Update image tag in deployment
+        sed -i "s|IMAGE_TAG|${{ github.sha }}|g" k8s/backend-deployment.yaml
+        
+        # Apply green deployment
+        kubectl apply -f k8s/backend-deployment.yaml
+        
+        # Wait for green deployment to be ready
+        kubectl rollout status deployment/backend-green --timeout=5m
+
+    - name: Health Check - Green Environment
+      run: |
+        # Get pod name
+        POD=$(kubectl get pods -l app=backend,version=green -o jsonpath='{.items[0].metadata.name}')
+        
+        # Wait for pod to be ready
+        kubectl wait --for=condition=ready pod/$POD --timeout=300s
+        
+        # Perform health check
+        HEALTH_STATUS=$(kubectl exec $POD -- curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health)
+        
+        if [ "$HEALTH_STATUS" != "200" ]; then
+          echo "Health check failed with status: $HEALTH_STATUS"
+          exit 1
+        fi
+        
+        echo "Health check passed"
+
+    - name: Run Integration Tests
+      run: |
+        # Get pod name
+        POD=$(kubectl get pods -l app=backend,version=green -o jsonpath='{.items[0].metadata.name}')
+        
+        # Test API endpoints
+        echo "Testing /health endpoint..."
+        kubectl exec $POD -- curl -f http://localhost:8000/health || exit 1
+        
+        echo "Testing /api/tasks endpoint..."
+        kubectl exec $POD -- curl -f http://localhost:8000/api/tasks || exit 1
+        
+        echo "All integration tests passed"
+
+    - name: Switch Traffic to Green (Blue-Green Deployment)
+      run: |
+        # Update service to point to green
+        kubectl patch service backend-service -p '{"spec":{"selector":{"version":"green"}}}'
+        
+        echo "Traffic switched to green deployment"
+        
+        # Wait for service to stabilize
+        sleep 30
+
+    - name: Validation Check
+      id: validation
+      run: |
+        # Get service IP (ClusterIP)
+        SERVICE_IP=$(kubectl get service backend-service -o jsonpath='{.spec.clusterIP}')
+        
+        # Create a test pod to check backend from within cluster
+        kubectl run test-backend --image=curlimages/curl:latest --rm -i --restart=Never -- \
+          curl -s -o /dev/null -w "%{http_code}" http://$SERVICE_IP:8000/health > /tmp/http_code.txt
+        
+        HTTP_CODE=$(cat /tmp/http_code.txt)
+        
+        if [ "$HTTP_CODE" != "200" ]; then
+          echo "validation=failed" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+        
+        echo "validation=passed" >> $GITHUB_OUTPUT
+
+    - name: Promote Green to Blue
+      if: steps.validation.outputs.validation == 'passed'
+      run: |
+        # Delete old blue deployment
+        kubectl delete deployment backend-blue --ignore-not-found=true
+        
+        # Rename green to blue
+        kubectl get deployment backend-green -o yaml | \
+          sed 's/backend-green/backend-blue/g' | \
+          sed 's/version: green/version: blue/g' | \
+          kubectl apply -f -
+        
+        # Delete green deployment
+        kubectl delete deployment backend-green
+        
+        echo "Green environment promoted to Blue"
+
+    - name: Rollback on Failure
+      if: failure() && steps.validation.outputs.validation == 'failed'
+      run: |
+        echo "Deployment validation failed. Rolling back..."
+        
+        # Switch traffic back to blue
+        kubectl patch service backend-service -p '{"spec":{"selector":{"version":"blue"}}}'
+        
+        # Delete failed green deployment
+        kubectl delete deployment backend-green --ignore-not-found=true
+        
+        echo "Rollback completed. Traffic restored to blue deployment"
+        exit 1
+
+    - name: Deployment Summary
+      if: always()
+      run: |
+        echo "=== Deployment Summary ==="
+        kubectl get deployments -l app=backend
+        kubectl get pods -l app=backend
+        kubectl get service backend-service
+        echo "=========================="
