@@ -84,7 +84,7 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>📝 Task Management System</h1>
+        <h1>📝 Task Management System v2.0</h1>
         <p className="subtitle">Deployed with Blue-Green Strategy on AKS</p>
       </header>
 
