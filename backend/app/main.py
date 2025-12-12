@@ -204,8 +204,8 @@ async def delete_task(task_id: int):
 async def root():
     """Root endpoint"""
     return {
-        "message": "Task Management API",
-        "version": "1.0.0",
+        "message": "Task Management API - Enhanced Version",
+        "version": "2.0.0",
         "endpoints": {
             "health": "/health",
             "tasks": "/api/tasks",
