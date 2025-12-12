@@ -1,16 +1,51 @@
-# Node.js
-frontend/node_modules/
-frontend/build/
-frontend/.env
+# =====================
+# Node / Frontend
+# =====================
+node_modules/
+build/
+.env
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
 
-# Python
-backend/__pycache__/
-backend/*.pyc
-backend/.env
-
-# Logs
+# =====================
+# Python / Backend
+# =====================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+*.venv
+venv/
+env/
+*.egg-info/
+*.pytest_cache/
+*.coverage
 *.log
 
-# OS files
-.DS_Store
-Thumbs.db
+# =====================
+# Docker
+# =====================
+*.dockerignore
+Dockerfile
+docker-compose*.yml
+
+# =====================
+# OS / IDE
+# =====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# =====================
+# Git
+# =====================
+*.orig
+*.rej
