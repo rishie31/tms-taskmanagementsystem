@@ -10,7 +10,7 @@ import os
 app = FastAPI(
     title="Task Management API",
     description="Backend API for Task Management System",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 # CORS middleware
