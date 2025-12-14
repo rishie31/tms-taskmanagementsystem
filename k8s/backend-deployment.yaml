@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: backend
-        image: taskmanagementacr.azurecr.io/taskmanagement-backend:latest
+        image: taskmanagementacr.azurecr.io/taskmanagement-backend:IMAGE_TAG
         ports:
         - containerPort: 8000
           protocol: TCP
@@ -77,7 +77,7 @@ spec:
     spec:
       containers:
       - name: backend
-        image: taskmanagementacr.azurecr.io/taskmanagement-backend:latest
+        image: taskmanagementacr.azurecr.io/taskmanagement-backend:IMAGE_TAG
         ports:
         - containerPort: 8000
           protocol: TCP

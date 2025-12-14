@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: taskmanagementacr.azurecr.io/taskmanagement-frontend:latest
+        image: taskmanagementacr.azurecr.io/taskmanagement-frontend:IMAGE_TAG
         ports:
         - containerPort: 80
           protocol: TCP
@@ -75,7 +75,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: taskmanagementacr.azurecr.io/taskmanagement-frontend:latest
+        image: taskmanagementacr.azurecr.io/taskmanagement-frontend:IMAGE_TAG
         ports:
         - containerPort: 80
           protocol: TCP
