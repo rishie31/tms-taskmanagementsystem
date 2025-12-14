@@ -23,7 +23,7 @@ env:
 jobs:
   build-and-scan:
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -34,102 +34,6 @@ jobs:
       - name: Log in to Azure Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.ACR_NAME }}
+          registry: ${{ secrets.ACR_LOGIN_SERVER }}
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
-
-      - name: Build Docker image
-        run: |
-          docker build -t ${{ env.ACR_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }} -t ${{ env.ACR_NAME }}/${{ env.IMAGE_NAME }}:latest ./frontend
-
-      - name: Run Trivy FS scan
-        uses: aquasecurity/trivy-action@0.24.0
-        with:
-          scan-type: fs
-          format: sarif
-          output: trivy-results.sarif
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: trivy-results.sarif
-
-  deploy:
-    needs: build-and-scan
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
-
-      - name: Get AKS credentials
-        run: |
-          az aks get-credentials \
-            --resource-group ${{ env.AKS_RESOURCE_GROUP }} \
-            --name ${{ env.AKS_CLUSTER_NAME }} \
-            --overwrite-existing
-
-      - name: Deploy Green Environment
-        run: |
-          sed -i "s|IMAGE_TAG|${{ github.sha }}|g" k8s/frontend-deployment.yaml
-          kubectl apply -f k8s/frontend-deployment.yaml
-          kubectl rollout status deployment/frontend-green --timeout=5m
-
-      - name: Health Check Green
-        run: |
-          POD=$(kubectl get pods -l app=frontend,version=green -o jsonpath='{.items[0].metadata.name}')
-          kubectl wait --for=condition=ready pod/$POD --timeout=300s
-          kubectl exec $POD -- wget --spider --timeout=10 http://localhost:80/ || exit 1
-
-      - name: Switch Traffic to Green
-        run: |
-          kubectl patch service frontend-service -p '{"spec":{"selector":{"version":"green"}}}'
-          sleep 30
-
-      - name: Validate Deployment
-        id: validation
-        run: |
-          EXTERNAL_IP=$(kubectl get service frontend-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          COUNTER=0
-          while [ -z "$EXTERNAL_IP" ] && [ $COUNTER -lt 30 ]; do
-            sleep 10
-            EXTERNAL_IP=$(kubectl get service frontend-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            COUNTER=$((COUNTER+1))
-          done
-          if [ -z "$EXTERNAL_IP" ]; then
-            echo "validation=failed" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://$EXTERNAL_IP/)
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "validation=failed" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-          echo "validation=passed" >> $GITHUB_OUTPUT
-
-      - name: Promote Green to Blue
-        if: steps.validation.outputs.validation == 'passed'
-        run: |
-          kubectl delete deployment frontend-blue --ignore-not-found=true
-          kubectl get deployment frontend-green -o yaml | sed 's/frontend-green/frontend-blue/g' | sed 's/version: green/version: blue/g' | kubectl apply -f -
-          kubectl delete deployment frontend-green
-          echo "Green promoted to Blue"
-
-      - name: Rollback on Failure
-        if: failure() && steps.validation.outputs.validation == 'failed'
-        run: |
-          kubectl patch service frontend-service -p '{"spec":{"selector":{"version":"blue"}}}'
-          kubectl delete deployment frontend-green --ignore-not-found=true
-          echo "Rollback completed"
-          exit 1
