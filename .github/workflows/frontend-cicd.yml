@@ -11,6 +11,10 @@ on:
     paths:
       - 'frontend/**'
 
+permissions:
+  contents: read
+  security-events: write
+
 env:
   ACR_NAME: ${{ secrets.ACR_LOGIN_SERVER }}
   IMAGE_NAME: taskmanagement-frontend
