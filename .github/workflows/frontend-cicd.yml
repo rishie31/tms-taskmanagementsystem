@@ -38,7 +38,7 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Build frontend image
+      - name: Build Docker image
         run: |
           docker build -t ${{ env.ACR_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }} -t ${{ env.ACR_NAME }}/${{ env.IMAGE_NAME }}:latest ./frontend
 
