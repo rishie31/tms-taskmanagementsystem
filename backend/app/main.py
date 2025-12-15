@@ -13,7 +13,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS middleware
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,8 +42,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-
-# Initialize database on startup
+#initialize database
 init_db()
 
 
